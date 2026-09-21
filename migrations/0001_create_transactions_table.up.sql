@@ -1,28 +1,21 @@
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY,
-
     kind VARCHAR(20) NOT NULL,
     status VARCHAR(20) NOT NULL,
-
     player_id UUID NOT NULL,
     wallet_id UUID NOT NULL,
     amount BIGINT NOT NULL,
     currency CHAR(3) NOT NULL,
-
     provider_id VARCHAR(100),
     external_transaction_id VARCHAR(255),
     idempotency_key VARCHAR(512),
     payload_hash VARCHAR(64),
     round_id VARCHAR(255),
     game_id VARCHAR(100),
-
     reference_external_transaction_id VARCHAR(255),
     reference_transaction_id UUID,
-
     failure_code VARCHAR(100),
-
     result_balance BIGINT,
-
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

@@ -258,3 +258,22 @@ func (w *WagerTransaction) MarkAsFailed(failureCode string) error {
 	w.failureCode = failureCode
 	return nil
 }
+
+func (w WagerTransaction) ID() uuid.UUID                  { return w.id }
+func (w WagerTransaction) ExternalTrID() string           { return w.externalTrId }
+func (w WagerTransaction) ProviderID() string             { return w.providerID }
+func (w WagerTransaction) IdempotencyKey() string         { return w.idempotencyKey }
+func (w WagerTransaction) WalletID() uuid.UUID            { return w.walletId }
+func (w WagerTransaction) PlayerID() uuid.UUID            { return w.playerId }
+func (w WagerTransaction) GameID() string                 { return w.gameId }
+func (w WagerTransaction) RoundID() string                { return w.roundID }
+func (w WagerTransaction) ReferenceExternalID() string    { return w.referenceExternalId }
+func (w WagerTransaction) ReferenceInternalID() uuid.UUID { return w.referenceInternalId }
+func (w WagerTransaction) PayloadHash() string            { return w.payloadHash }
+func (w WagerTransaction) Kind() Kind                     { return w.kind }
+func (w WagerTransaction) Status() Status                 { return w.status }
+func (w WagerTransaction) FailureCode() string            { return w.failureCode }
+func (w WagerTransaction) Amount() money.Money            { return w.amount }
+func (w WagerTransaction) ResultBalance() money.Money     { return w.resultBalance }
+func (w WagerTransaction) CreatedAt() time.Time           { return w.createdAt }
+func (w WagerTransaction) UpdatedAt() time.Time           { return w.updatedAt }

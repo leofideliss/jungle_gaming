@@ -15,7 +15,7 @@ var (
 	ErrDuplicateRow = errors.New("mensagem ja existe na base")
 )
 
-type InboxRow struct {
+type inboxRow struct {
 	id          uuid.UUID `db:"id"`
 	msgId       string    `db:"msg_id"`
 	consumerID  string    `db:"consumer_id"`
