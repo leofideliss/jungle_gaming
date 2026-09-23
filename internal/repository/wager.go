@@ -60,7 +60,7 @@ func (r *WagerTransactionRepository) Insert(ctx context.Context, tx pgx.Tx, wt w
 	return err
 }
 
-func (r *WagerTransactionRepository) FindByExternalTransactionId(ctx context.Context, externalTxID string) (wager.WagerTransaction, error) {
+func (r *WagerTransactionRepository) FindByExternalTransactionIdAndProviderId(ctx context.Context, externalTxID, providerId string) (wager.WagerTransaction, error) {
 	var row wagerTransactionRow
 
 	err := r.pool.QueryRow(ctx,
@@ -69,39 +69,8 @@ func (r *WagerTransactionRepository) FindByExternalTransactionId(ctx context.Con
 		        round_id, game_id, reference_external_transaction_id,
 		        reference_transaction_id, failure_code, result_balance
 		   FROM transactions
-		  WHERE external_transaction_id = $1`,
-		externalTxID,
-	).Scan(
-		&row.ID, &row.Kind, &row.Status, &row.PlayerID, &row.WalletID, &row.Amount, &row.Currency,
-		&row.ProviderID, &row.ExternalTransactionID, &row.IdempotencyKey, &row.PayloadHash,
-		&row.RoundID, &row.GameID, &row.ReferenceExternalTransactionID,
-		&row.ReferenceTransactionID, &row.FailureCode, &row.ResultBalance,
-	)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return wager.WagerTransaction{}, ErrTransactionNotFound
-		}
-		return wager.WagerTransaction{}, err
-	}
-
-	input, err := row.toRestoreInput()
-	if err != nil {
-		return wager.WagerTransaction{}, err
-	}
-	return wager.RestoreWagerTransaction(input)
-}
-
-func (r *WagerTransactionRepository) FindByProviderID(ctx context.Context, providerID string) (wager.WagerTransaction, error) {
-	var row wagerTransactionRow
-
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, kind, status, player_id, wallet_id, amount, currency,
-		        provider_id, external_transaction_id, idempotency_key, payload_hash,
-		        round_id, game_id, reference_external_transaction_id,
-		        reference_transaction_id, failure_code, result_balance
-		   FROM transactions
-		  WHERE provider_id = $1 `,
-		providerID,
+		  WHERE external_transaction_id = $1 AND provider_id = $2`,
+		externalTxID, providerId,
 	).Scan(
 		&row.ID, &row.Kind, &row.Status, &row.PlayerID, &row.WalletID, &row.Amount, &row.Currency,
 		&row.ProviderID, &row.ExternalTransactionID, &row.IdempotencyKey, &row.PayloadHash,
