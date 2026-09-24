@@ -37,11 +37,11 @@ func NewWalletRepository(pool *pgxpool.Pool) *WalletRepository {
 	return &WalletRepository{pool: pool}
 }
 
-func (r *WalletRepository) GetWallet(ctx context.Context, id uuid.UUID) (wallet.Wallet, error) {
+func (r *WalletRepository) GetWallet(ctx context.Context, tx pgx.Tx, id uuid.UUID) (wallet.Wallet, error) {
 	var row walletRow
 
-	err := r.pool.QueryRow(ctx,
-		`SELECT id, player_id, balance, currency, version, created_at, updated_at FROM wallets WHERE id = $1`,
+	err := tx.QueryRow(ctx,
+		`SELECT id, player_id, balance, currency, version, created_at, updated_at FROM wallets WHERE id = $1 FOR UPDATE`,
 		id,
 	).Scan(
 		&row.id,
@@ -73,43 +73,11 @@ func (r *WalletRepository) GetWallet(ctx context.Context, id uuid.UUID) (wallet.
 	)
 }
 
-func (r *WalletRepository) DebitWallet(ctx context.Context, walletID uuid.UUID, amount money.Money, txID uuid.UUID) error {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
+func (r *WalletRepository) UpdateWallet(ctx context.Context, tx pgx.Tx, walletID uuid.UUID, balance int64, txID uuid.UUID, entry ledger.WalletLedger) error {
 
-	var row walletRow
-	err = tx.QueryRow(ctx,
-		`SELECT id, player_id, balance, currency, version, created_at, updated_at
-		   FROM wallets WHERE id = $1 FOR UPDATE`,
-		walletID,
-	).Scan(&row.id, &row.playerID, &row.balance, &row.currency, &row.version, &row.createdAt, &row.updatedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrWalletNotFound
-		}
-		return err
-	}
-
-	balance, err := money.RestoreMoney(row.balance, row.currency)
-	if err != nil {
-		return err
-	}
-	w, err := wallet.RestoreWallet(row.id, row.playerID, balance, row.version, row.createdAt, row.updatedAt)
-	if err != nil {
-		return err
-	}
-
-	entry, err := w.Debit(amount, txID)
-	if err != nil {
-		return err
-	}
-
-	_, err = tx.Exec(ctx,
-		`UPDATE wallets SET balance = $1, version = $2, updated_at = NOW() WHERE id = $3`,
-		w.Balance().Cents(), w.Version(), walletID,
+	_, err := tx.Exec(ctx,
+		`UPDATE wallets SET balance = $1, version = version + 1, updated_at = NOW() WHERE id = $2`,
+		balance, walletID,
 	)
 	if err != nil {
 		return err
@@ -119,7 +87,7 @@ func (r *WalletRepository) DebitWallet(ctx context.Context, walletID uuid.UUID, 
 		return err
 	}
 
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (r *WalletRepository) insertLedgerTx(ctx context.Context, tx pgx.Tx, e ledger.WalletLedger) error {

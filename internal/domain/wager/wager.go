@@ -79,13 +79,6 @@ type NewWagerTransactionInput struct {
 	Amount              money.Money
 }
 
-type NewWagerTransactionOpenInput struct {
-	WalletId            uuid.UUID
-	PlayerId            uuid.UUID
-	ReferenceExternalId string
-	Amount              money.Money
-}
-
 type RestoreWagerTransactionInput struct {
 	Id                  uuid.UUID
 	ExternalTrId        string
@@ -135,13 +128,12 @@ func NewWagerTransaction(wgInput NewWagerTransactionInput) (WagerTransaction, er
 		gameId:              wgInput.GameId,
 		roundID:             wgInput.RoundID,
 		referenceExternalId: wgInput.ReferenceExternalId,
-
-		payloadHash: wgInput.PayloadHash,
-		kind:        wgInput.Kind,
-		status:      StatusPending,
-		amount:      wgInput.Amount,
-		createdAt:   timeNow,
-		updatedAt:   timeNow,
+		payloadHash:         wgInput.PayloadHash,
+		kind:                wgInput.Kind,
+		status:              StatusPending,
+		amount:              wgInput.Amount,
+		createdAt:           timeNow,
+		updatedAt:           timeNow,
 	}, nil
 }
 

@@ -91,6 +91,37 @@ func (r *WagerTransactionRepository) FindByExternalTransactionIdAndProviderId(ct
 	return wager.RestoreWagerTransaction(input)
 }
 
+func (r *WagerTransactionRepository) FindByTrAndStatus(ctx context.Context, referencTrID string, status wager.Kind) (wager.WagerTransaction, error) {
+	var row wagerTransactionRow
+
+	err := r.pool.QueryRow(ctx,
+		`SELECT id, kind, status, player_id, wallet_id, amount, currency,
+		        provider_id, external_transaction_id, idempotency_key, payload_hash,
+		        round_id, game_id, reference_external_transaction_id,
+		        reference_transaction_id, failure_code, result_balance
+		   FROM transactions
+		  WHERE id = $1 AND status = $2`,
+		referencTrID, status,
+	).Scan(
+		&row.ID, &row.Kind, &row.Status, &row.PlayerID, &row.WalletID, &row.Amount, &row.Currency,
+		&row.ProviderID, &row.ExternalTransactionID, &row.IdempotencyKey, &row.PayloadHash,
+		&row.RoundID, &row.GameID, &row.ReferenceExternalTransactionID,
+		&row.ReferenceTransactionID, &row.FailureCode, &row.ResultBalance,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return wager.WagerTransaction{}, ErrTransactionNotFound
+		}
+		return wager.WagerTransaction{}, err
+	}
+
+	input, err := row.toRestoreInput()
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
+	return wager.RestoreWagerTransaction(input)
+}
+
 func (r *WagerTransactionRepository) UpdateStatus(ctx context.Context, tx pgx.Tx, status wager.Status, id uuid.UUID) error {
 	res, err := tx.Exec(ctx, `UPDATE transactions SET status = $1 , updated_at = NOW() WHERE id = $2`, status, id)
 

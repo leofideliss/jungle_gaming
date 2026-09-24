@@ -46,10 +46,10 @@ func (i *IdempotencyService) Check(ctx context.Context, providerId, externalID, 
 	}
 
 	if tr.PayloadHash() == payload {
-		return IdempotencyResult{Result: StatusReplay, Tr: tr}, err
+		return IdempotencyResult{Result: StatusReplay, Tr: tr}, nil
 
 	}
 
-	return IdempotencyResult{Result: StatusConflict, Tr: tr}, err
+	return IdempotencyResult{Result: StatusConflict, Tr: tr}, nil
 
 }
