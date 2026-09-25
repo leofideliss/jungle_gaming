@@ -100,7 +100,7 @@ func (r *WagerTransactionRepository) FindByTrAndStatus(ctx context.Context, refe
 		        round_id, game_id, reference_external_transaction_id,
 		        reference_transaction_id, failure_code, result_balance
 		   FROM transactions
-		  WHERE id = $1 AND status = $2`,
+		  WHERE reference_transaction_id = $1 AND status = $2`,
 		referencTrID, status,
 	).Scan(
 		&row.ID, &row.Kind, &row.Status, &row.PlayerID, &row.WalletID, &row.Amount, &row.Currency,

@@ -6,6 +6,7 @@ import (
 	"jungle_gaming/internal/domain/ledger"
 	"jungle_gaming/internal/domain/money"
 	"jungle_gaming/internal/domain/wager"
+	"jungle_gaming/internal/domain/wallet"
 	"jungle_gaming/internal/idempotency"
 	"jungle_gaming/internal/repository"
 	"time"
@@ -73,10 +74,9 @@ func (w *WagerUseCase) ProcessWagerTransaction(in ProcessWagerInput) (wager.Wage
 		return result.Tr, nil
 	case idempotency.StatusConflict:
 		return result.Tr, ErrInvalidIdempotency
-	}
-
-	if result.Result != idempotency.StatusNew {
-		return wager.WagerTransaction{}, err
+	case idempotency.StatusNew:
+	default:
+		return wager.WagerTransaction{}, ErrInvalidResult
 	}
 
 	tx, err := w.pool.Begin(ctx)
@@ -102,62 +102,11 @@ func (w *WagerUseCase) processTransaction(ctx context.Context, tx pgx.Tx, in Pro
 	var entry ledger.WalletLedger
 	var err error
 
-	wallet, err := w.wallets.GetWallet(ctx, tx, in.WalletID)
+	userWallet, err := w.wallets.GetWallet(ctx, tx, in.WalletID)
 	if err != nil {
 		return wager.WagerTransaction{}, err
 	}
 	trID := uuid.Must(uuid.NewV7())
-
-	switch in.Kind {
-	case wager.KindBet:
-		entry, err = wallet.Debit(in.Amount, trID)
-		if err != nil {
-			return wager.WagerTransaction{}, err
-		}
-		err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, wallet.Balance().Cents(), trID, entry)
-		if err != nil {
-			return wager.WagerTransaction{}, err
-		}
-
-	case wager.KindLoss:
-
-	case wager.KindOpening:
-		entry, err = wallet.Credit(in.Amount, trID)
-		if err != nil {
-			return wager.WagerTransaction{}, err
-		}
-		err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, wallet.Balance().Cents(), trID, entry)
-		if err != nil {
-			return wager.WagerTransaction{}, err
-		}
-	case wager.KindRefund:
-		_, err := w.transactions.FindByTrAndStatus(ctx, in.ExternalTransactionID, wager.KindRefund)
-		if err != nil {
-			if errors.Is(err, repository.ErrTransactionNotFound) {
-				entry, err = wallet.Credit(in.Amount, trID)
-				if err != nil {
-					return wager.WagerTransaction{}, err
-				}
-				err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, wallet.Balance().Cents(), trID, entry)
-				if err != nil {
-					return wager.WagerTransaction{}, err
-				}
-			}
-			return wager.WagerTransaction{}, err
-		}
-	case wager.KindRollback:
-
-	case wager.KindWin:
-		entry, err = wallet.Credit(in.Amount, trID)
-		if err != nil {
-			return wager.WagerTransaction{}, err
-		}
-		err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, wallet.Balance().Cents(), trID, entry)
-		if err != nil {
-			return wager.WagerTransaction{}, err
-		}
-	}
-
 	var newTransaction wager.WagerTransaction
 	if in.Kind == wager.KindOpening {
 		newTransaction, err = createTransactionOpening(in)
@@ -168,12 +117,95 @@ func (w *WagerUseCase) processTransaction(ctx context.Context, tx pgx.Tx, in Pro
 		return wager.WagerTransaction{}, err
 	}
 
-	newTransaction.MarkAsProcessed(wallet.Balance())
-	err = w.transactions.Insert(ctx, tx, newTransaction)
+	switch in.Kind {
+	case wager.KindBet:
+		entry, err = userWallet.Debit(in.Amount, trID)
+		if err != nil {
+			if errors.Is(err, wallet.ErrInsufficientBalance) {
+				err := newTransaction.MarkAsRejected("INSUFFICIENT_BALANCE")
+				if err == nil {
+					return w.saveTransaction(ctx, tx, newTransaction)
+				}
+			}
+			return wager.WagerTransaction{}, err
+		}
+		err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, userWallet.Balance().Cents(), trID, entry)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		err = newTransaction.MarkAsProcessed(userWallet.Balance())
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		return w.saveTransaction(ctx, tx, newTransaction)
+	case wager.KindLoss:
+		return w.saveTransaction(ctx, tx, newTransaction)
+
+	case wager.KindOpening:
+		entry, err = userWallet.Credit(in.Amount, trID)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, userWallet.Balance().Cents(), trID, entry)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+	case wager.KindRefund:
+		refundTransaction, err := w.transactions.FindByExternalTransactionIdAndProviderId(ctx, in.ExternalTransactionID, in.ProviderID)
+		if err != nil {
+			if errors.Is(err, repository.ErrTransactionNotFound) {
+				err = newTransaction.MarkAsPendingReference()
+				if err == nil {
+					return w.saveTransaction(ctx, tx, newTransaction)
+
+				}
+			}
+			return wager.WagerTransaction{}, err
+		}
+
+		_, err = w.transactions.FindByTrAndStatus(ctx, refundTransaction.ID().String(), wager.KindRefund)
+		if err != nil {
+			if errors.Is(err, repository.ErrTransactionNotFound) {
+				entry, err = userWallet.Credit(refundTransaction.Amount(), trID)
+				if err != nil {
+					return wager.WagerTransaction{}, err
+
+				}
+				err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, userWallet.Balance().Cents(), trID, entry)
+				if err != nil {
+					return wager.WagerTransaction{}, err
+				}
+			}
+			return wager.WagerTransaction{}, err
+		}
+		err = newTransaction.MarkAsProcessed(userWallet.Balance())
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		return w.saveTransaction(ctx, tx, newTransaction)
+
+	case wager.KindRollback:
+
+	case wager.KindWin:
+		entry, err = userWallet.Credit(in.Amount, trID)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		err = w.wallets.UpdateWallet(ctx, tx, in.WalletID, userWallet.Balance().Cents(), trID, entry)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		return w.saveTransaction(ctx, tx, newTransaction)
+	}
+
+	return w.saveTransaction(ctx, tx, newTransaction)
+}
+
+func (w *WagerUseCase) saveTransaction(ctx context.Context, tx pgx.Tx, newTransaction wager.WagerTransaction) (wager.WagerTransaction, error) {
+	err := w.transactions.Insert(ctx, tx, newTransaction)
 	if err != nil {
 		return wager.WagerTransaction{}, err
 	}
-
 	return newTransaction, nil
 }
 
