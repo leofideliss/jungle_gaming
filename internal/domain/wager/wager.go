@@ -15,7 +15,8 @@ var (
 	ErrInvalidID             = errors.New("id invalido")
 	ErrInvalidStatus         = errors.New("status invalido")
 
-	ErrInvalidChangeStatus = errors.New("operacao nao permitida nesse status")
+	ErrInvalidChangeStatus  = errors.New("operacao nao permitida nesse status")
+	ErrInvalidBindReference = errors.New("nao é possivel vincular a referencia para esse tipo")
 )
 
 type Kind string
@@ -248,6 +249,30 @@ func (w *WagerTransaction) MarkAsFailed(failureCode string) error {
 	w.status = StatusFailed
 	w.updatedAt = time.Now().UTC()
 	w.failureCode = failureCode
+	return nil
+}
+
+func (w *WagerTransaction) BindReferenceInternalID(id uuid.UUID) error {
+	switch w.kind {
+	case KindRefund, KindRollback:
+	default:
+		return ErrInvalidBindReference
+	}
+
+	w.referenceInternalId = id
+	w.updatedAt = time.Now().UTC()
+	return nil
+}
+
+func (w *WagerTransaction) BindReferenceExternalID(id string) error {
+	switch w.kind {
+	case KindRefund, KindRollback:
+	default:
+		return ErrInvalidBindReference
+	}
+
+	w.referenceExternalId = id
+	w.updatedAt = time.Now().UTC()
 	return nil
 }
 

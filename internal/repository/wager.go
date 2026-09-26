@@ -91,7 +91,7 @@ func (r *WagerTransactionRepository) FindByExternalTransactionIdAndProviderId(ct
 	return wager.RestoreWagerTransaction(input)
 }
 
-func (r *WagerTransactionRepository) FindByTrAndStatus(ctx context.Context, referencTrID string, status wager.Kind) (wager.WagerTransaction, error) {
+func (r *WagerTransactionRepository) FindByReferenceIdAndStatus(ctx context.Context, referencTrID string, status wager.Status) (wager.WagerTransaction, error) {
 	var row wagerTransactionRow
 
 	err := r.pool.QueryRow(ctx,
