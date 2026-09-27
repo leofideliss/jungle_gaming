@@ -46,12 +46,12 @@ func seedWallet(t *testing.T, pool *pgxpool.Pool, balanceCents int64) (uuid.UUID
 	return walletID, playerID
 }
 
-func seedBETTransaction(t *testing.T, pool *pgxpool.Pool, walletID, playerID uuid.UUID, amountCents int64) uuid.UUID {
+func seedBETTransaction(t *testing.T, pool *pgxpool.Pool, walletID, playerID uuid.UUID, amountCents int64) string {
 	t.Helper()
 	ctx := context.Background()
 
 	txID := uuid.Must(uuid.NewV7())
-	providerID := "provider_test"
+	providerID := "provider-a"
 	extTxID := "ext_tx_" + uuid.Must(uuid.NewV7()).String()
 	idempotencyKey := "idem_key_" + uuid.Must(uuid.NewV7()).String()
 	payloadHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -79,7 +79,7 @@ func seedBETTransaction(t *testing.T, pool *pgxpool.Pool, walletID, playerID uui
 		t.Fatalf("seed BET transaction failed: %v", err)
 	}
 
-	return txID
+	return extTxID
 }
 
 func TestProcessBet_Success(t *testing.T) {
@@ -408,17 +408,18 @@ func TestProcessRefund_Success(t *testing.T) {
 	uc := newUseCase(pool)
 	walletID, playerID := seedWallet(t, pool, 10000) // 100.00
 
-	trId := seedBETTransaction(t, pool, walletID, playerID, 5000) // 50.00
+	extTrId := seedBETTransaction(t, pool, walletID, playerID, 5000) // 50.00
 
 	// limpa no fim
 	defer pool.Exec(ctx, `DELETE FROM wallet_ledger_entries WHERE wallet_id = $1`, walletID)
-	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
+	//	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
 	defer pool.Exec(ctx, `DELETE FROM wallets WHERE id = $1`, walletID)
 
 	amount, _ := money.NewMoney("30.00", "BRL")
 	in := ProcessWagerInput{
 		ProviderID:            "provider-a",
-		ExternalTransactionID: trId.String(),
+		ExternalTransactionID: extTrId + "2",
+		ReferenceExternalID:   extTrId,
 		IdempotencyKey:        "idem-001",
 		PlayerID:              playerID,
 		WalletID:              walletID,
@@ -429,7 +430,6 @@ func TestProcessRefund_Success(t *testing.T) {
 	}
 
 	tr, err := uc.ProcessWagerTransaction(in)
-
 	if err != nil {
 		t.Fatalf("processar refund: %v", err)
 	}
@@ -456,5 +456,64 @@ func TestProcessRefund_Success(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("lançamentos de crédito = %d, esperado 1", count)
+	}
+}
+
+func TestProcessRefund_NotFound(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	defer pool.Close()
+
+	uc := newUseCase(pool)
+	walletID, playerID := seedWallet(t, pool, 10000) // 100.00
+
+	extTrId := seedBETTransaction(t, pool, walletID, playerID, 5000) // 50.00
+
+	// limpa no fim
+	defer pool.Exec(ctx, `DELETE FROM wallet_ledger_entries WHERE wallet_id = $1`, walletID)
+	//	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM wallets WHERE id = $1`, walletID)
+
+	amount, _ := money.NewMoney("30.00", "BRL")
+	in := ProcessWagerInput{
+		ProviderID:            "provider-a",
+		ExternalTransactionID: extTrId + "2",
+		ReferenceExternalID:   extTrId + "_test",
+		IdempotencyKey:        "idem-001",
+		PlayerID:              playerID,
+		WalletID:              walletID,
+		RoundID:               "round-1",
+		GameID:                "game-1",
+		Kind:                  wager.KindRefund,
+		Amount:                amount,
+	}
+
+	tr, err := uc.ProcessWagerTransaction(in)
+	if err != nil {
+		t.Fatalf("processar refund: %v", err)
+	}
+
+	if tr.Status() != wager.StatusPendingReference {
+		t.Errorf("status = %s, esperado PENDING_REFERENCE", tr.Status())
+	}
+
+	var balance int64
+	err = pool.QueryRow(ctx, `SELECT balance FROM wallets WHERE id = $1`, walletID).Scan(&balance)
+	if err != nil {
+		t.Fatalf("ler saldo: %v", err)
+	}
+	if balance != 10000 {
+		t.Errorf("saldo = %d, esperado 10000", balance)
+	}
+
+	var count int
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM wallet_ledger_entries WHERE wallet_id = $1 AND movement_type = 'CREDIT'`,
+		walletID).Scan(&count)
+	if err != nil {
+		t.Fatalf("contar ledger: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("lançamentos de crédito = %d, esperado 0", count)
 	}
 }

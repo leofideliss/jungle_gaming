@@ -147,7 +147,6 @@ func (w *WagerUseCase) processTransaction(ctx context.Context, tx pgx.Tx, in Pro
 		return w.saveTransaction(ctx, tx, newTransaction)
 
 	case wager.KindRefund:
-
 		// busca a transação de origem
 		refundTransaction, err := w.transactions.FindByExternalTransactionIdAndProviderId(ctx, in.ReferenceExternalID, in.ProviderID)
 		if errors.Is(err, repository.ErrTransactionNotFound) {
