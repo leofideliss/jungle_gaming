@@ -412,7 +412,7 @@ func TestProcessRefund_Success(t *testing.T) {
 
 	// limpa no fim
 	defer pool.Exec(ctx, `DELETE FROM wallet_ledger_entries WHERE wallet_id = $1`, walletID)
-	//	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
 	defer pool.Exec(ctx, `DELETE FROM wallets WHERE id = $1`, walletID)
 
 	amount, _ := money.NewMoney("30.00", "BRL")
@@ -471,7 +471,7 @@ func TestProcessRefund_NotFound(t *testing.T) {
 
 	// limpa no fim
 	defer pool.Exec(ctx, `DELETE FROM wallet_ledger_entries WHERE wallet_id = $1`, walletID)
-	//	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
 	defer pool.Exec(ctx, `DELETE FROM wallets WHERE id = $1`, walletID)
 
 	amount, _ := money.NewMoney("30.00", "BRL")
@@ -514,6 +514,141 @@ func TestProcessRefund_NotFound(t *testing.T) {
 		t.Fatalf("contar ledger: %v", err)
 	}
 	if count != 0 {
-		t.Errorf("lançamentos de crédito = %d, esperado 0", count)
+		t.Errorf("lançamentos esperado = %d, esperado 0", count)
+	}
+}
+
+func TestProcessTwiceRefund_Success(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	defer pool.Close()
+
+	uc := newUseCase(pool)
+	walletID, playerID := seedWallet(t, pool, 10000) // 100.00
+
+	extTrId := seedBETTransaction(t, pool, walletID, playerID, 5000) // 50.00
+
+	// limpa no fim
+	defer pool.Exec(ctx, `DELETE FROM wallet_ledger_entries WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM wallets WHERE id = $1`, walletID)
+
+	amount, _ := money.NewMoney("30.00", "BRL")
+	in := ProcessWagerInput{
+		ProviderID:            "provider-a",
+		ExternalTransactionID: extTrId + "2",
+		ReferenceExternalID:   extTrId,
+		IdempotencyKey:        "idem-001",
+		PlayerID:              playerID,
+		WalletID:              walletID,
+		RoundID:               "round-1",
+		GameID:                "game-1",
+		Kind:                  wager.KindRefund,
+		Amount:                amount,
+	}
+
+	in2 := ProcessWagerInput{
+		ProviderID:            "provider-a",
+		ExternalTransactionID: extTrId + "3",
+		ReferenceExternalID:   extTrId,
+		IdempotencyKey:        "idem-003",
+		PlayerID:              playerID,
+		WalletID:              walletID,
+		RoundID:               "round-1",
+		GameID:                "game-1",
+		Kind:                  wager.KindRefund,
+		Amount:                amount,
+	}
+	_, err := uc.ProcessWagerTransaction(in)
+	if err != nil {
+		t.Fatalf("processar refund: %v", err)
+	}
+
+	tr, err := uc.ProcessWagerTransaction(in2)
+	if err != nil {
+		t.Fatalf("processar refund: %v", err)
+	}
+
+	if tr.Status() != wager.StatusRejected {
+		t.Errorf("status = %s, esperado REJECTED", tr.Status())
+	}
+
+	var balance int64
+	err = pool.QueryRow(ctx, `SELECT balance FROM wallets WHERE id = $1`, walletID).Scan(&balance)
+	if err != nil {
+		t.Fatalf("ler saldo: %v", err)
+	}
+	if balance != 15000 {
+		t.Errorf("saldo = %d, esperado 15000", balance)
+	}
+
+	var count int
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM wallet_ledger_entries WHERE wallet_id = $1 AND movement_type = 'CREDIT'`,
+		walletID).Scan(&count)
+	if err != nil {
+		t.Fatalf("contar ledger: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("lançamentos de crédito = %d, esperado 1", count)
+	}
+}
+
+func TestProcessRollBack_Success(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	defer pool.Close()
+
+	uc := newUseCase(pool)
+	walletID, playerID := seedWallet(t, pool, 10000) // 100.00
+
+	extTrId := seedBETTransaction(t, pool, walletID, playerID, 5000) // 50.00
+
+	// limpa no fim
+	defer pool.Exec(ctx, `DELETE FROM wallet_ledger_entries WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM transactions WHERE wallet_id = $1`, walletID)
+	defer pool.Exec(ctx, `DELETE FROM wallets WHERE id = $1`, walletID)
+
+	amount, _ := money.NewMoney("30.00", "BRL")
+	in := ProcessWagerInput{
+		ProviderID:            "provider-a",
+		ExternalTransactionID: extTrId + "2",
+		ReferenceExternalID:   extTrId,
+		IdempotencyKey:        "idem-001",
+		PlayerID:              playerID,
+		WalletID:              walletID,
+		RoundID:               "round-1",
+		GameID:                "game-1",
+		Kind:                  wager.KindRollback,
+		Amount:                amount,
+	}
+
+	tr, err := uc.ProcessWagerTransaction(in)
+	if err != nil {
+		t.Fatalf("processar rollback: %v", err)
+	}
+
+	if tr.Status() != wager.StatusProcessed {
+		t.Errorf("status = %s, esperado PROCESSED", tr.Status())
+	}
+
+	var balance int64
+	err = pool.QueryRow(ctx, `SELECT balance FROM wallets WHERE id = $1`, walletID).Scan(&balance)
+	if err != nil {
+		t.Fatalf("ler saldo: %v", err)
+	}
+	if balance != 15000 {
+		t.Errorf("saldo = %d, esperado 15000", balance)
+	}
+
+	var count int
+	err = pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM wallet_ledger_entries WHERE wallet_id = $1 AND movement_type = 'CREDIT'`,
+		walletID).Scan(&count)
+	if err != nil {
+		t.Fatalf("contar ledger: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("lançamentos de crédito = %d, esperado 1", count)
 	}
 }
