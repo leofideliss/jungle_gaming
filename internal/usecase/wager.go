@@ -21,6 +21,7 @@ var (
 	ErrInvalidIdempotency = errors.New("chaves iguais corpo diferente")
 	ErrInvalidKind        = errors.New("tipo invalido")
 	ErrTrAlreadyRefund    = errors.New("transacao ja estornada para referencia")
+	ErrTrAlreadyProcessed = errors.New("transacao ja processada anteriormente")
 )
 
 type ProcessWagerInput struct {
@@ -77,7 +78,7 @@ func (w *WagerUseCase) ProcessWagerTransaction(in ProcessWagerInput) (wager.Wage
 
 	switch result.Result {
 	case idempotency.StatusReplay:
-		return result.Tr, nil
+		return result.Tr, ErrTrAlreadyProcessed
 	case idempotency.StatusConflict:
 		return result.Tr, ErrInvalidIdempotency
 	case idempotency.StatusNew:

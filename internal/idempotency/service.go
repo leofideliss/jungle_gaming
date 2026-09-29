@@ -21,15 +21,15 @@ type IdempotencyResult struct {
 	Tr     wager.WagerTransaction
 }
 
-type transactionFinder interface {
+type TransactionFinder interface {
 	FindByExternalTransactionIdAndProviderId(ctx context.Context, externalId, providerId string) (wager.WagerTransaction, error)
 }
 
 type IdempotencyService struct {
-	finder transactionFinder
+	finder TransactionFinder
 }
 
-func NewIdempotencyService(i transactionFinder) *IdempotencyService {
+func NewIdempotencyService(i TransactionFinder) *IdempotencyService {
 	return &IdempotencyService{finder: i}
 }
 
