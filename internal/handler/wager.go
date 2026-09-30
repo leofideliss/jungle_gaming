@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"jungle_gaming/internal/domain/money"
 	"jungle_gaming/internal/domain/wager"
+	"jungle_gaming/internal/middleware"
 	"jungle_gaming/internal/usecase"
 	"net/http"
 
@@ -52,6 +54,7 @@ func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.R
 	}
 
 	in.Data.IdempotencyKey = r.Header.Get("x-idempotency-key")
+	in.Data.ProviderID = getProviderID(r.Context())
 
 	wagerInput, err := in.ToUseCaseInput()
 	if err != nil {
@@ -110,4 +113,12 @@ func (r *WagerRequest) ToUseCaseInput() (usecase.ProcessWagerInput, error) {
 		Kind:                  wager.Kind(r.Data.Kind),
 		Amount:                amount,
 	}, nil
+}
+
+func getProviderID(ctx context.Context) string {
+	v, ok := ctx.Value(middleware.ProviderID).(string)
+	if !ok {
+		return ""
+	}
+	return v
 }

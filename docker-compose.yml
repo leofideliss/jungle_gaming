@@ -1,4 +1,20 @@
 services:
+  app:
+    build: .
+    container_name: jungle_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      KEYCLOAK_URL: http://keycloak:8080/realms/jungle-gaming
+    ports:
+      - "8080:8080"
+      
   postgres:
     image: postgres:16-alpine
     container_name: jungle_postgres
@@ -31,5 +47,23 @@ services:
         "up"
       ]
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: jungle_keycloak
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "9090:8080"
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    command: start-dev --import-realm
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+      
 volumes:
   pgdata:

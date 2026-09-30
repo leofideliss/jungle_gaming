@@ -1,0 +1,26 @@
+{
+  "realm": "jungle-gaming",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "provider-a",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "provider-a-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false
+    },
+    {
+      "clientId": "provider-b",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "provider-b-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false
+    }
+  ]
+}

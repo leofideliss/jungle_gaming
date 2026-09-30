@@ -6,15 +6,19 @@ import (
 	"jungle_gaming/internal/config"
 	"jungle_gaming/internal/handler"
 	"jungle_gaming/internal/idempotency"
+	"jungle_gaming/internal/middleware"
 	"jungle_gaming/internal/repository"
 	"jungle_gaming/internal/usecase"
 	"net/http"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 	"go.uber.org/fx"
 )
 
 func main() {
+	godotenv.Load()
 	fx.New(
 		fx.Provide(
 			func(lc fx.Lifecycle) (*pgxpool.Pool, error) {
@@ -33,6 +37,13 @@ func main() {
 			},
 		),
 		fx.Provide(
+			func() (func(http.Handler) http.Handler, error) {
+				return middleware.NewAuthMiddleware(
+					context.Background(),
+					os.Getenv("KEYCLOAK_URL"),
+				)
+			}),
+		fx.Provide(
 			repository.NewWalletRepository,
 			repository.NewOutboxRepository,
 			repository.NewWagerTransactionRepository,
@@ -48,13 +59,15 @@ func main() {
 	).Run()
 }
 
-func startServer(lc fx.Lifecycle, h *handler.WagerHandler) {
+func startServer(lc fx.Lifecycle, h *handler.WagerHandler, authMW func(http.Handler) http.Handler) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
+	wrapped := authMW(mux)
+
 	server := &http.Server{
 		Addr:    ":8080",
-		Handler: mux,
+		Handler: wrapped,
 	}
 	lc.Append(fx.Hook{
 
