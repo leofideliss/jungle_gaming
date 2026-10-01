@@ -9,6 +9,7 @@ import (
 	"jungle_gaming/internal/middleware"
 	"jungle_gaming/internal/repository"
 	"jungle_gaming/internal/usecase"
+	"jungle_gaming/internal/worker"
 	"net/http"
 	"os"
 
@@ -44,6 +45,15 @@ func main() {
 				)
 			}),
 		fx.Provide(
+			func(uc *usecase.WagerUseCase) (*worker.SQSConsumer, error) {
+				return worker.NewSQSConsumer(
+					os.Getenv("SQS_QUEUE_URL"),
+					os.Getenv("SQS_ENDPOINT"),
+					uc,
+				)
+			},
+		),
+		fx.Provide(
 			repository.NewWalletRepository,
 			repository.NewOutboxRepository,
 			repository.NewWagerTransactionRepository,
@@ -56,6 +66,7 @@ func main() {
 			},
 		),
 		fx.Invoke(startServer),
+		fx.Invoke(startConsumer),
 	).Run()
 }
 
@@ -79,6 +90,20 @@ func startServer(lc fx.Lifecycle, h *handler.WagerHandler, authMW func(http.Hand
 		OnStop: func(ctx context.Context) error {
 			fmt.Println("desligando servidor...")
 			return server.Shutdown(ctx)
+		},
+	})
+}
+
+func startConsumer(lc fx.Lifecycle, consumer *worker.SQSConsumer) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(_ context.Context) error {
+			go consumer.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			cancel()
+			return nil
 		},
 	})
 }

@@ -2,7 +2,9 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"jungle_gaming/internal/domain/event"
 	"jungle_gaming/internal/domain/ledger"
 	"jungle_gaming/internal/domain/money"
 	"jungle_gaming/internal/domain/wager"
@@ -123,10 +125,12 @@ func (w *WagerUseCase) processTransaction(ctx context.Context, tx pgx.Tx, in Pro
 	if err != nil {
 		return wager.WagerTransaction{}, err
 	}
+
+	beforeBalance := userWallet.Balance()
 	// Tratar tipos de operacao
 	switch in.Kind {
 	case wager.KindBet:
-		return w.bet(ctx, tx, userWallet, in, trID, newTransaction)
+		return w.bet(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
 
 	case wager.KindLoss:
 		if err := newTransaction.MarkAsProcessed(userWallet.Balance()); err != nil {
@@ -173,10 +177,34 @@ func createTransactionDefault(in ProcessWagerInput, payloadToStringHash string) 
 	return wager.NewWagerTransaction(transactionInput)
 }
 
-func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction) (wager.WagerTransaction, error) {
+func (w *WagerUseCase) outboxTrProcessed(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (event.Event, error) {
+	eventTr := event.NewWagerTransactionProcessed(in.IdempotencyKey, event.WagerTransactionProcessedData{
+		TransactionID: trID.String(),
+		Kind:          string(newTransaction.Kind()),
+		Status:        string(newTransaction.Status()),
+		ProviderID:    newTransaction.ProviderID(),
+		PlayerID:      newTransaction.PlayerID().String(),
+		WalletID:      newTransaction.WalletID().String(),
+		ResultBalance: userWallet.Balance().String(),
+	})
+	payloadTr, err := json.Marshal(eventTr)
+	if err != nil {
+		return event.Event{}, err
+	}
+	if err := w.outbox.Insert(ctx, tx, eventTr.EventID, trID, eventTr.EventType, eventTr.AggregateType, payloadTr); err != nil {
+		return event.Event{}, err
+	}
+	return eventTr, nil
+}
+
+func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (wager.WagerTransaction, error) {
 	entry, err := userWallet.Debit(in.Amount, trID)
 	if errors.Is(err, wallet.ErrInsufficientBalance) {
 		if err := newTransaction.MarkAsRejected("INSUFFICIENT_BALANCE"); err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		_, err = w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
+		if err != nil {
 			return wager.WagerTransaction{}, err
 		}
 		return w.saveTransaction(ctx, tx, newTransaction)
@@ -191,6 +219,30 @@ func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wal
 	}
 
 	if err := newTransaction.MarkAsProcessed(userWallet.Balance()); err != nil {
+		return wager.WagerTransaction{}, err
+	}
+
+	eventTr, err := w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
+
+	eventWallet := event.NewWalletBalanceChanged(in.IdempotencyKey, &eventTr.EventID, event.WalletBalanceChangedData{
+		WalletID:      in.WalletID.String(),
+		TransactionID: trID.String(),
+		Direction:     "DEBIT",
+		Amount:        in.Amount.String(),
+		Currency:      in.Amount.Currency(),
+		BalanceBefore: beforeBalance.String(),
+		BalanceAfter:  userWallet.Balance().String(),
+		WalletVersion: userWallet.Version(),
+	})
+
+	payloadWallet, err := json.Marshal(eventWallet)
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
+	if err := w.outbox.Insert(ctx, tx, eventWallet.EventID, in.WalletID, eventWallet.EventType, eventWallet.AggregateType, payloadWallet); err != nil {
 		return wager.WagerTransaction{}, err
 	}
 	return w.saveTransaction(ctx, tx, newTransaction)

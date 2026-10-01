@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"jungle_gaming/internal/usecase"
 	"log"
 	"time"
@@ -10,6 +11,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 type SQSConsumer struct {
@@ -57,12 +59,48 @@ func (s *SQSConsumer) Start(ctx context.Context) {
 			WaitTimeSeconds:     20,
 		})
 		if err != nil {
-			log.Println("error ao receber mensagem: %v", err)
+			log.Printf("error ao receber mensagem: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		for _, msg := range output.Messages {
-
+			s.processMessage(ctx, msg)
 		}
+	}
+}
+
+func (s *SQSConsumer) processMessage(ctx context.Context, msg types.Message) {
+	var request usecase.WagerRequestDTO
+	if err := json.Unmarshal([]byte(*msg.Body), &request); err != nil {
+		log.Printf("mensagem invalida descartando %v", err)
+		s.deleteMessage(ctx, msg)
+		return
+	}
+
+	in, err := request.ToInput()
+	if err != nil {
+		log.Printf("dados invalidos %v", err)
+		s.deleteMessage(ctx, msg)
+
+		return
+	}
+
+	_, err = s.useCase.ProcessWagerTransaction(in)
+	if err != nil {
+		log.Printf("erro ao processar %v", err)
+		return
+	}
+
+	s.deleteMessage(ctx, msg)
+}
+
+func (s *SQSConsumer) deleteMessage(ctx context.Context, msg types.Message) {
+	_, err := s.client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      &s.queueUrl,
+		ReceiptHandle: msg.ReceiptHandle,
+	})
+
+	if err != nil {
+		log.Printf("erro ao deletar mensagem %v", err)
 	}
 }

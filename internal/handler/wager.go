@@ -4,31 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"jungle_gaming/internal/domain/money"
 	"jungle_gaming/internal/domain/wager"
 	"jungle_gaming/internal/middleware"
 	"jungle_gaming/internal/usecase"
 	"net/http"
-
-	"github.com/google/uuid"
 )
-
-type WagerRequest struct {
-	Data struct {
-		ExternalTransactionID string `json:"externalTransactionId"`
-		ProviderID            string `json:"providerId"`
-		IdempotencyKey        string `json:"idempotencyKey"`
-		PlayerID              string `json:"playerId"`
-		WalletID              string `json:"walletId"`
-		RoundID               string `json:"roundId"`
-		GameID                string `json:"gameId"`
-		Kind                  string `json:"kind"`
-		Money                 struct {
-			Amount   string `json:"amount"`
-			Currency string `json:"currency"`
-		} `json:"money"`
-	} `json:"data"`
-}
 
 type WagerUseCase interface {
 	ProcessWagerTransaction(in usecase.ProcessWagerInput) (wager.WagerTransaction, error)
@@ -47,7 +27,7 @@ func (wh *WagerHandler) RegisterRoutes(mx *http.ServeMux) {
 }
 
 func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.Request) {
-	var in WagerRequest
+	var in usecase.WagerRequestDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -56,7 +36,7 @@ func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.R
 	in.Data.IdempotencyKey = r.Header.Get("x-idempotency-key")
 	in.Data.ProviderID = getProviderID(r.Context())
 
-	wagerInput, err := in.ToUseCaseInput()
+	wagerInput, err := in.ToInput()
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -89,35 +69,6 @@ func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.R
 	}
 
 	WriteJSON(w, http.StatusOK, res)
-}
-
-func (r *WagerRequest) ToUseCaseInput() (usecase.ProcessWagerInput, error) {
-
-	parsedPlayerID, err := uuid.Parse(r.Data.PlayerID)
-	if err != nil {
-		return usecase.ProcessWagerInput{}, err
-	}
-	parsedWalletID, err := uuid.Parse(r.Data.WalletID)
-	if err != nil {
-		return usecase.ProcessWagerInput{}, err
-	}
-
-	amount, err := money.NewMoney(r.Data.Money.Amount, r.Data.Money.Currency)
-	if err != nil {
-		return usecase.ProcessWagerInput{}, err
-	}
-
-	return usecase.ProcessWagerInput{
-		ExternalTransactionID: r.Data.ExternalTransactionID,
-		ProviderID:            r.Data.ProviderID,
-		IdempotencyKey:        r.Data.IdempotencyKey,
-		PlayerID:              parsedPlayerID,
-		WalletID:              parsedWalletID,
-		RoundID:               r.Data.RoundID,
-		GameID:                r.Data.GameID,
-		Kind:                  wager.Kind(r.Data.Kind),
-		Amount:                amount,
-	}, nil
 }
 
 func getProviderID(ctx context.Context) string {
