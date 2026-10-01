@@ -78,6 +78,11 @@ func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if errors.Is(err, usecase.ErrNotSameProviderID) {
+		WriteError(w, http.StatusForbidden, err.Error())
+		return
+	}
+
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return

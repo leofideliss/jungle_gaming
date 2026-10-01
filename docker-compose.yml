@@ -64,6 +64,23 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  localstack:
+    image: localstack/localstack:3
+    container_name: jungle_localstack
+    environment:
+      SERVICES: sqs
+      DEFAULT_REGION: us-east-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./infra/localstack/init.sh:/etc/localstack/init/ready.d/init.sh
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
       
 volumes:
   pgdata:
