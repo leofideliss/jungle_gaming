@@ -42,7 +42,7 @@ func NewOutboxRepository(p *pgxpool.Pool) *OutboxRepository {
 func (o *OutboxRepository) Insert(ctx context.Context, tx pgx.Tx, eventId, aggregateId uuid.UUID, eventType, aggregateType string, payload []byte) error {
 	id := uuid.Must(uuid.NewV7())
 
-	_, err := tx.Exec(ctx, `INSERT INTO outbox (id, event_id , aggregate_id , aggregate_type , event_type , payload ) VALUES($1,$2,$3,$4,$5,$6)`, id, eventId, aggregateId, aggregateType, eventType, payload)
+	_, err := tx.Exec(ctx, `INSERT INTO outbox (id, event_id , aggregate_id , aggregate_type , event_type , payload , occurred_at ) VALUES($1,$2,$3,$4,$5,$6,NOW())`, id, eventId, aggregateId, aggregateType, eventType, payload)
 
 	if err != nil {
 		return err

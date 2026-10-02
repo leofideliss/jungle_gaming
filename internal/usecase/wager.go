@@ -197,6 +197,29 @@ func (w *WagerUseCase) outboxTrProcessed(ctx context.Context, tx pgx.Tx, userWal
 	return eventTr, nil
 }
 
+func (w *WagerUseCase) outboxUpdateWallet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, beforeBalance money.Money, eventTr *event.Event, moviment ledger.Direction) (event.Event, error) {
+	eventWallet := event.NewWalletBalanceChanged(in.IdempotencyKey, &eventTr.EventID, event.WalletBalanceChangedData{
+		WalletID:      in.WalletID.String(),
+		TransactionID: trID.String(),
+		Direction:     string(moviment),
+		Amount:        in.Amount.String(),
+		Currency:      in.Amount.Currency(),
+		BalanceBefore: beforeBalance.String(),
+		BalanceAfter:  userWallet.Balance().String(),
+		WalletVersion: userWallet.Version(),
+	})
+
+	payloadWallet, err := json.Marshal(eventWallet)
+	if err != nil {
+		return event.Event{}, err
+	}
+	if err := w.outbox.Insert(ctx, tx, eventWallet.EventID, in.WalletID, eventWallet.EventType, eventWallet.AggregateType, payloadWallet); err != nil {
+		return event.Event{}, err
+	}
+
+	return eventWallet, nil
+}
+
 func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (wager.WagerTransaction, error) {
 	entry, err := userWallet.Debit(in.Amount, trID)
 	if errors.Is(err, wallet.ErrInsufficientBalance) {
@@ -227,24 +250,11 @@ func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wal
 		return wager.WagerTransaction{}, err
 	}
 
-	eventWallet := event.NewWalletBalanceChanged(in.IdempotencyKey, &eventTr.EventID, event.WalletBalanceChangedData{
-		WalletID:      in.WalletID.String(),
-		TransactionID: trID.String(),
-		Direction:     "DEBIT",
-		Amount:        in.Amount.String(),
-		Currency:      in.Amount.Currency(),
-		BalanceBefore: beforeBalance.String(),
-		BalanceAfter:  userWallet.Balance().String(),
-		WalletVersion: userWallet.Version(),
-	})
-
-	payloadWallet, err := json.Marshal(eventWallet)
+	_, err = w.outboxUpdateWallet(ctx, tx, userWallet, in, trID, beforeBalance, &eventTr, ledger.TypeDebit)
 	if err != nil {
 		return wager.WagerTransaction{}, err
 	}
-	if err := w.outbox.Insert(ctx, tx, eventWallet.EventID, in.WalletID, eventWallet.EventType, eventWallet.AggregateType, payloadWallet); err != nil {
-		return wager.WagerTransaction{}, err
-	}
+
 	return w.saveTransaction(ctx, tx, newTransaction)
 }
 
