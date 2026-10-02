@@ -139,13 +139,13 @@ func (w *WagerUseCase) processTransaction(ctx context.Context, tx pgx.Tx, in Pro
 		return w.saveTransaction(ctx, tx, newTransaction)
 
 	case wager.KindRefund:
-		return w.refund(ctx, tx, userWallet, in, trID, newTransaction)
+		return w.refund(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
 
 	case wager.KindRollback:
-		return w.rollback(ctx, tx, userWallet, in, trID, newTransaction)
+		return w.rollback(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
 
 	case wager.KindWin:
-		return w.win(ctx, tx, userWallet, in, trID, newTransaction)
+		return w.win(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
 
 	default:
 		return wager.WagerTransaction{}, ErrInvalidKind
@@ -177,7 +177,40 @@ func createTransactionDefault(in ProcessWagerInput, payloadToStringHash string) 
 	return wager.NewWagerTransaction(transactionInput)
 }
 
-func (w *WagerUseCase) outboxTrProcessed(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (event.Event, error) {
+func (w *WagerUseCase) outboxTrPending(ctx context.Context, tx pgx.Tx, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction) (event.Event, error) {
+	eventTr := event.NewWagerTransactionPendingReference(in.IdempotencyKey, event.WagerTransactionPendingReferenceData{
+		TransactionID:       trID.String(),
+		ProviderID:          newTransaction.ProviderID(),
+		ReferenceExternalID: newTransaction.ExternalTrID(),
+	})
+	payloadTr, err := json.Marshal(eventTr)
+	if err != nil {
+		return event.Event{}, err
+	}
+	if err := w.outbox.Insert(ctx, tx, eventTr.EventID, trID, eventTr.EventType, eventTr.AggregateType, payloadTr); err != nil {
+		return event.Event{}, err
+	}
+	return eventTr, nil
+}
+
+func (w *WagerUseCase) outboxTrRejected(ctx context.Context, tx pgx.Tx, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, failureCode string) (event.Event, error) {
+	eventTr := event.NewWagerTransactionRejected(in.IdempotencyKey, event.WagerTransactionRejectedData{
+		TransactionID: trID.String(),
+		Kind:          string(newTransaction.Kind()),
+		ProviderID:    newTransaction.ProviderID(),
+		FailureCode:   failureCode,
+	})
+	payloadTr, err := json.Marshal(eventTr)
+	if err != nil {
+		return event.Event{}, err
+	}
+	if err := w.outbox.Insert(ctx, tx, eventTr.EventID, trID, eventTr.EventType, eventTr.AggregateType, payloadTr); err != nil {
+		return event.Event{}, err
+	}
+	return eventTr, nil
+}
+
+func (w *WagerUseCase) outboxTrProcessed(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction) (event.Event, error) {
 	eventTr := event.NewWagerTransactionProcessed(in.IdempotencyKey, event.WagerTransactionProcessedData{
 		TransactionID: trID.String(),
 		Kind:          string(newTransaction.Kind()),
@@ -226,7 +259,7 @@ func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wal
 		if err := newTransaction.MarkAsRejected("INSUFFICIENT_BALANCE"); err != nil {
 			return wager.WagerTransaction{}, err
 		}
-		_, err = w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
+		_, err = w.outboxTrRejected(ctx, tx, in, trID, newTransaction, "INSUFFICIENT_BALANCE")
 		if err != nil {
 			return wager.WagerTransaction{}, err
 		}
@@ -245,7 +278,7 @@ func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wal
 		return wager.WagerTransaction{}, err
 	}
 
-	eventTr, err := w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction, beforeBalance)
+	eventTr, err := w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction)
 	if err != nil {
 		return wager.WagerTransaction{}, err
 	}
@@ -258,7 +291,7 @@ func (w *WagerUseCase) bet(ctx context.Context, tx pgx.Tx, userWallet wallet.Wal
 	return w.saveTransaction(ctx, tx, newTransaction)
 }
 
-func (w *WagerUseCase) refund(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction) (wager.WagerTransaction, error) {
+func (w *WagerUseCase) refund(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (wager.WagerTransaction, error) {
 	// busca a transação de origem
 	refundTransaction, err := w.transactions.FindByExternalTransactionIdAndProviderId(ctx, in.ReferenceExternalID, in.ProviderID)
 	if errors.Is(err, repository.ErrTransactionNotFound) {
@@ -268,6 +301,12 @@ func (w *WagerUseCase) refund(ctx context.Context, tx pgx.Tx, userWallet wallet.
 		if err := newTransaction.BindReferenceExternalID(in.ReferenceExternalID); err != nil {
 			return wager.WagerTransaction{}, err
 		}
+
+		_, err := w.outboxTrPending(ctx, tx, in, trID, newTransaction)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+
 		return w.saveTransaction(ctx, tx, newTransaction)
 	}
 
@@ -291,6 +330,16 @@ func (w *WagerUseCase) refund(ctx context.Context, tx pgx.Tx, userWallet wallet.
 		if err := newTransaction.BindReferenceInternalID(refundTransaction.ID()); err != nil {
 			return wager.WagerTransaction{}, err
 		}
+
+		eventTr, err := w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+
+		_, err = w.outboxUpdateWallet(ctx, tx, userWallet, in, trID, beforeBalance, &eventTr, ledger.TypeCredit)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
 		return w.saveTransaction(ctx, tx, newTransaction)
 	}
 
@@ -302,13 +351,22 @@ func (w *WagerUseCase) refund(ctx context.Context, tx pgx.Tx, userWallet wallet.
 		return wager.WagerTransaction{}, err
 	}
 
+	_, err = w.outboxTrRejected(ctx, tx, in, trID, newTransaction, "DUPLICATED_TRANSACTION")
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
+
 	return w.saveTransaction(ctx, tx, newTransaction)
 }
 
-func (w *WagerUseCase) win(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction) (wager.WagerTransaction, error) {
+func (w *WagerUseCase) win(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (wager.WagerTransaction, error) {
 	entry, err := userWallet.Credit(in.Amount, trID)
 	if errors.Is(err, wallet.ErrNonPositiveAmount) {
 		if err := newTransaction.MarkAsRejected("INVALID_VALUE"); err != nil {
+			return wager.WagerTransaction{}, err
+		}
+		_, err = w.outboxTrRejected(ctx, tx, in, trID, newTransaction, "INVALID_VALUE")
+		if err != nil {
 			return wager.WagerTransaction{}, err
 		}
 		return w.saveTransaction(ctx, tx, newTransaction)
@@ -325,10 +383,20 @@ func (w *WagerUseCase) win(ctx context.Context, tx pgx.Tx, userWallet wallet.Wal
 	if err := newTransaction.MarkAsProcessed(userWallet.Balance()); err != nil {
 		return wager.WagerTransaction{}, err
 	}
+
+	eventTr, err := w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction)
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
+
+	_, err = w.outboxUpdateWallet(ctx, tx, userWallet, in, trID, beforeBalance, &eventTr, ledger.TypeCredit)
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
 	return w.saveTransaction(ctx, tx, newTransaction)
 }
 
-func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction) (wager.WagerTransaction, error) {
+func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet wallet.Wallet, in ProcessWagerInput, trID uuid.UUID, newTransaction wager.WagerTransaction, beforeBalance money.Money) (wager.WagerTransaction, error) {
 	var entry ledger.WalletLedger
 	var err error
 
@@ -337,6 +405,11 @@ func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet walle
 		if err := newTransaction.MarkAsPendingReference(); err != nil {
 			return wager.WagerTransaction{}, err
 		}
+		_, err := w.outboxTrPending(ctx, tx, in, trID, newTransaction)
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+
 		return w.saveTransaction(ctx, tx, newTransaction)
 	}
 	if err != nil {
@@ -356,6 +429,10 @@ func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet walle
 			if err := newTransaction.MarkAsRejected("INSUFFICIENT_BALANCE"); err != nil {
 				return wager.WagerTransaction{}, err
 			}
+			_, err = w.outboxTrRejected(ctx, tx, in, trID, newTransaction, "DUPLICATED_TRANSACTION")
+			if err != nil {
+				return wager.WagerTransaction{}, err
+			}
 			return w.saveTransaction(ctx, tx, newTransaction)
 		}
 
@@ -372,6 +449,19 @@ func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet walle
 	}
 
 	if err := newTransaction.MarkAsProcessed(userWallet.Balance()); err != nil {
+		return wager.WagerTransaction{}, err
+	}
+
+	eventTr, err := w.outboxTrProcessed(ctx, tx, userWallet, in, trID, newTransaction)
+	if err != nil {
+		return wager.WagerTransaction{}, err
+	}
+	moviment := ledger.TypeDebit
+	if refundTransaction.Kind() == wager.KindBet {
+		moviment = ledger.TypeCredit
+	}
+	_, err = w.outboxUpdateWallet(ctx, tx, userWallet, in, trID, beforeBalance, &eventTr, moviment)
+	if err != nil {
 		return wager.WagerTransaction{}, err
 	}
 

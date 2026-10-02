@@ -54,6 +54,16 @@ func main() {
 			},
 		),
 		fx.Provide(
+			func(outbox *repository.OutboxRepository, pool *pgxpool.Pool) (*worker.SQSOutboxProducer, error) {
+				return worker.NewSQSOutboxProducer(
+					os.Getenv("SQS_OUTBOX_QUEUE_URL"),
+					os.Getenv("SQS_ENDPOINT"),
+					outbox,
+					pool,
+				)
+			},
+		),
+		fx.Provide(
 			repository.NewWalletRepository,
 			repository.NewOutboxRepository,
 			repository.NewWagerTransactionRepository,
@@ -67,6 +77,7 @@ func main() {
 		),
 		fx.Invoke(startServer),
 		fx.Invoke(startConsumer),
+		fx.Invoke(startOutboxProducer),
 	).Run()
 }
 
@@ -99,6 +110,20 @@ func startConsumer(lc fx.Lifecycle, consumer *worker.SQSConsumer) {
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
 			go consumer.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			cancel()
+			return nil
+		},
+	})
+}
+
+func startOutboxProducer(lc fx.Lifecycle, outboxProducer *worker.SQSOutboxProducer) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(_ context.Context) error {
+			go outboxProducer.Start(ctx)
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {

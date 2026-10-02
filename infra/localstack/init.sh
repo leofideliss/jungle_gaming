@@ -9,3 +9,9 @@ awslocal sqs create-queue \
   }'
 
 echo "Fila criada: wager-transactions.fifo"
+
+awslocal sqs create-queue \
+  --queue-name wager-events-out.fifo \
+  --attributes '{"FifoQueue":"true","ContentBasedDeduplication":"false"}'
+
+echo "Fila criada: wager-events-out.fifo"
