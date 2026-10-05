@@ -8,10 +8,11 @@ import (
 	"jungle_gaming/internal/middleware"
 	"jungle_gaming/internal/usecase"
 	"net/http"
+	"time"
 )
 
 type WagerUseCase interface {
-	ProcessWagerTransaction(in usecase.ProcessWagerInput) (wager.WagerTransaction, error)
+	ProcessWagerTransaction(ctx context.Context, in usecase.ProcessWagerInput) (wager.WagerTransaction, error)
 }
 
 type WagerHandler struct {
@@ -27,6 +28,8 @@ func (wh *WagerHandler) RegisterRoutes(mx *http.ServeMux) {
 }
 
 func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	var in usecase.WagerRequestDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		WriteError(w, http.StatusBadRequest, err.Error())
@@ -42,7 +45,7 @@ func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	res, err := wh.wagerCase.ProcessWagerTransaction(wagerInput)
+	res, err := wh.wagerCase.ProcessWagerTransaction(ctx, wagerInput)
 
 	if errors.Is(err, usecase.ErrInvalidIdempotency) {
 		WriteError(w, http.StatusConflict, err.Error())

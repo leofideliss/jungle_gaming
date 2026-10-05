@@ -43,6 +43,14 @@ func main() {
 					context.Background(),
 					os.Getenv("KEYCLOAK_URL"),
 				)
+
+			}),
+		fx.Provide(
+			func(pool *pgxpool.Pool) *handler.HealthHandler {
+				return handler.NewHealthHandler(
+					pool,
+					os.Getenv("KEYCLOAK_URL"),
+				)
 			}),
 		fx.Provide(
 			func(uc *usecase.WagerUseCase) (*worker.SQSConsumer, error) {
@@ -66,6 +74,7 @@ func main() {
 		fx.Provide(
 			repository.NewWalletRepository,
 			repository.NewOutboxRepository,
+			repository.NewInboxRepository,
 			repository.NewWagerTransactionRepository,
 			func(r *repository.WagerTransactionRepository) *idempotency.IdempotencyService {
 				return idempotency.NewIdempotencyService(r)
@@ -81,9 +90,10 @@ func main() {
 	).Run()
 }
 
-func startServer(lc fx.Lifecycle, h *handler.WagerHandler, authMW func(http.Handler) http.Handler) {
+func startServer(lc fx.Lifecycle, h *handler.WagerHandler, health *handler.HealthHandler, authMW func(http.Handler) http.Handler) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	health.RegisterRoutes(mux)
 
 	wrapped := authMW(mux)
 

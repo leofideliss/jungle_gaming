@@ -32,10 +32,12 @@ func NewInboxRepository(p *pgxpool.Pool) *InboxRepository {
 	return &InboxRepository{pool: p}
 }
 
-func (i *InboxRepository) InsertInbox(ctx context.Context, tx pgx.Tx, id uuid.UUID, msg_id, consumer_id, payload string, receivedAt, finishedAt time.Time) error {
-
-	_, err := tx.Exec(ctx, `INSERT INTO inbox( id , msg_id , consumer_id , json_hash_hex, received_at , finished_at) values ($1,$2,$3,$4,$5,$6)`, id, msg_id, consumer_id, payload, receivedAt, finishedAt)
-
+func (i *InboxRepository) InsertInbox(ctx context.Context, tx pgx.Tx, msgID, consumerID string) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO inbox (id, msg_id, consumer_id, received_at)
+         VALUES ($1, $2, $3, NOW())`,
+		uuid.Must(uuid.NewV7()), msgID, consumerID,
+	)
 	if err != nil {
 		var pgError *pgconn.PgError
 		if errors.As(err, &pgError) && pgError.Code == "23505" {
@@ -43,6 +45,5 @@ func (i *InboxRepository) InsertInbox(ctx context.Context, tx pgx.Tx, id uuid.UU
 		}
 		return err
 	}
-
 	return nil
 }

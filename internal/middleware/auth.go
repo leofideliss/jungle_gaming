@@ -17,6 +17,7 @@ type claims struct {
 }
 
 func NewAuthMiddleware(ctx context.Context, issuerUrl string) (func(http.Handler) http.Handler, error) {
+
 	provider, err := oidc.NewProvider(ctx, issuerUrl)
 	if err != nil {
 		return nil, err
@@ -28,6 +29,11 @@ func NewAuthMiddleware(ctx context.Context, issuerUrl string) (func(http.Handler
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/health/live" || r.URL.Path == "/health/ready" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				http.Error(w, "token ausente", http.StatusUnauthorized)

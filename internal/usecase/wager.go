@@ -11,10 +11,10 @@ import (
 	"jungle_gaming/internal/domain/wallet"
 	"jungle_gaming/internal/idempotency"
 	"jungle_gaming/internal/repository"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -32,6 +32,7 @@ type ProcessWagerInput struct {
 	ExternalTransactionID string
 	ReferenceExternalID   string
 	IdempotencyKey        string
+	MessageID             *string
 	PlayerID              uuid.UUID
 	WalletID              uuid.UUID
 	RoundID               string
@@ -45,26 +46,25 @@ type WagerUseCase struct {
 	wallets      *repository.WalletRepository
 	transactions *repository.WagerTransactionRepository
 	outbox       *repository.OutboxRepository
+	inbox        *repository.InboxRepository
 	idempotency  *idempotency.IdempotencyService
 }
 
-func NewWagerUseCase(p *pgxpool.Pool, w *repository.WalletRepository, tr *repository.WagerTransactionRepository, o *repository.OutboxRepository, i *idempotency.IdempotencyService) *WagerUseCase {
+func NewWagerUseCase(p *pgxpool.Pool, w *repository.WalletRepository, tr *repository.WagerTransactionRepository, o *repository.OutboxRepository, i *idempotency.IdempotencyService, in *repository.InboxRepository) *WagerUseCase {
 	return &WagerUseCase{
 		pool:         p,
 		wallets:      w,
 		transactions: tr,
 		outbox:       o,
+		inbox:        in,
 		idempotency:  i,
 	}
 }
 
-func (w *WagerUseCase) ProcessWagerTransaction(in ProcessWagerInput) (wager.WagerTransaction, error) {
+func (w *WagerUseCase) ProcessWagerTransaction(ctx context.Context, in ProcessWagerInput) (wager.WagerTransaction, error) {
 	if in.Kind == wager.KindOpening {
 		return wager.WagerTransaction{}, ErrInvalidKind
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	payloadHash := idempotency.NewPayloadHash(in.Kind, in.PlayerID, in.WalletID, in.RoundID, in.GameID, in.ExternalTransactionID, in.Amount.String())
 	payloadToStringHash, err := payloadHash.CalculatePayloadHash()
@@ -98,10 +98,25 @@ func (w *WagerUseCase) ProcessWagerTransaction(in ProcessWagerInput) (wager.Wage
 		return wager.WagerTransaction{}, err
 	}
 	defer tx.Rollback(ctx)
+	// check inbox
+	if in.MessageID != nil {
+		err := w.inbox.InsertInbox(ctx, tx, *in.MessageID, "sqs-consumer")
+		if errors.Is(err, repository.ErrDuplicateRow) {
+			existing, err := w.transactions.FindByExternalTransactionIdAndProviderId(ctx, in.ExternalTransactionID, in.ProviderID)
+			if err != nil {
+				return wager.WagerTransaction{}, err
+			}
+			return existing, nil
+		}
+		if err != nil {
+			return wager.WagerTransaction{}, err
+		}
+	}
 
 	newTransaction, err := w.processTransaction(ctx, tx, in, payloadToStringHash)
 	if err != nil {
 		return wager.WagerTransaction{}, err
+
 	}
 
 	err = tx.Commit(ctx)
@@ -155,6 +170,10 @@ func (w *WagerUseCase) processTransaction(ctx context.Context, tx pgx.Tx, in Pro
 func (w *WagerUseCase) saveTransaction(ctx context.Context, tx pgx.Tx, newTransaction wager.WagerTransaction) (wager.WagerTransaction, error) {
 	err := w.transactions.Insert(ctx, tx, newTransaction)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return wager.WagerTransaction{}, ErrTrAlreadyProcessed
+		}
 		return wager.WagerTransaction{}, err
 	}
 	return newTransaction, nil

@@ -85,7 +85,9 @@ func (s *SQSConsumer) processMessage(ctx context.Context, msg types.Message) {
 		return
 	}
 
-	_, err = s.useCase.ProcessWagerTransaction(in)
+	in.MessageID = msg.MessageId
+
+	_, err = s.useCase.ProcessWagerTransaction(ctx, in)
 	if err != nil {
 		log.Printf("erro ao processar %v", err)
 		return

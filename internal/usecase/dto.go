@@ -9,14 +9,15 @@ import (
 
 type WagerRequestDTO struct {
 	Data struct {
-		ExternalTransactionID string `json:"externalTransactionId"`
-		ProviderID            string `json:"providerId"`
-		IdempotencyKey        string `json:"idempotencyKey"`
-		PlayerID              string `json:"playerId"`
-		WalletID              string `json:"walletId"`
-		RoundID               string `json:"roundId"`
-		GameID                string `json:"gameId"`
-		Kind                  string `json:"kind"`
+		ExternalTransactionID string  `json:"externalTransactionId"`
+		ProviderID            string  `json:"providerId"`
+		IdempotencyKey        string  `json:"idempotencyKey"`
+		MessageID             *string `json:"messageId"`
+		PlayerID              string  `json:"playerId"`
+		WalletID              string  `json:"walletId"`
+		RoundID               string  `json:"roundId"`
+		GameID                string  `json:"gameId"`
+		Kind                  string  `json:"kind"`
 		Money                 struct {
 			Amount   string `json:"amount"`
 			Currency string `json:"currency"`

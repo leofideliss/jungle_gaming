@@ -36,6 +36,8 @@ type wagerTransactionRow struct {
 	ResultBalance                  *int64
 	CreatedAt                      time.Time
 	UpdatedAt                      time.Time
+	Attempts                       int
+	NextAttemptAt                  time.Time
 }
 
 type WagerTransactionRepository struct {
@@ -58,6 +60,44 @@ func (r *WagerTransactionRepository) Insert(ctx context.Context, tx pgx.Tx, wt w
 		row.ReferenceExternalTransactionID, row.ReferenceTransactionID, row.FailureCode, row.ResultBalance,
 	)
 	return err
+}
+
+func (r *WagerTransactionRepository) FindByReprocess(ctx context.Context, tx pgx.Tx) ([]wager.WagerTransaction, error) {
+
+	rows, err := tx.Query(ctx,
+		`SELECT id, kind, status, player_id, wallet_id, amount, currency,
+		        provider_id, external_transaction_id, idempotency_key, payload_hash,
+		        round_id, game_id, reference_external_transaction_id,
+		        reference_transaction_id, failure_code, result_balance , attempts , next_attempt_at
+		   FROM transactions
+		   WHERE status = $1 and next_attempt_at < NOW()
+           FOR UPDATE SKIP LOCKED`,
+		wager.StatusPendingReference,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var list []wager.WagerTransaction
+	for rows.Next() {
+		var transaction wagerTransactionRow
+		err := rows.Scan(
+			&transaction.ID, &transaction.Kind, &transaction.Status, &transaction.PlayerID, &transaction.WalletID, &transaction.Amount, &transaction.Currency,
+			&transaction.ProviderID, &transaction.ExternalTransactionID, &transaction.IdempotencyKey, &transaction.PayloadHash,
+			&transaction.RoundID, &transaction.GameID, &transaction.ReferenceExternalTransactionID,
+			&transaction.ReferenceTransactionID, &transaction.FailureCode, &transaction.ResultBalance, &transaction.Attempts, &transaction.NextAttemptAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		input, err := transaction.toRestoreInput()
+		if err != nil {
+			return nil, err
+		}
+		tr, err := wager.RestoreWagerTransaction(input)
+		list = append(list, tr)
+	}
+
+	return list, nil
 }
 
 func (r *WagerTransactionRepository) FindByExternalTransactionIdAndProviderId(ctx context.Context, externalTxID, providerId string) (wager.WagerTransaction, error) {
@@ -136,6 +176,20 @@ func (r *WagerTransactionRepository) UpdateStatus(ctx context.Context, tx pgx.Tx
 	return nil
 }
 
+func (r *WagerTransactionRepository) UpdateRetryTrPending(ctx context.Context, tx pgx.Tx, id uuid.UUID, attempts int, nextAttempAt time.Time) error {
+	res, err := tx.Exec(ctx, `UPDATE transactions SET attempts = $1 , next_attempt_at = $2 , updated_at = NOW() WHERE id = $3`, attempts, nextAttempAt, id)
+
+	if err != nil {
+		return err
+	}
+
+	if res.RowsAffected() == 0 {
+		return ErrTransactionNotFound
+	}
+
+	return nil
+}
+
 func toWagerRow(wt wager.WagerTransaction) wagerTransactionRow {
 	return wagerTransactionRow{
 		ID:                             wt.ID(),
@@ -157,6 +211,8 @@ func toWagerRow(wt wager.WagerTransaction) wagerTransactionRow {
 		ResultBalance:                  resultBalancePtr(wt.ResultBalance()),
 		CreatedAt:                      wt.CreatedAt(),
 		UpdatedAt:                      wt.UpdatedAt(),
+		Attempts:                       wt.Attempts(),
+		NextAttemptAt:                  wt.NextAttemptAt(),
 	}
 }
 
@@ -215,6 +271,8 @@ func (row wagerTransactionRow) toRestoreInput() (wager.RestoreWagerTransactionIn
 		ResultBalance:       resultBalance,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
+		Attempts:            row.Attempts,
+		NextAttemptAt:       row.NextAttemptAt,
 	}, nil
 }
 

@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS outbox (
     attempts INT NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ,
-    locked_by VARCHAR(100),
-    locked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     CONSTRAINT uk_event_id UNIQUE (event_id),

@@ -1,0 +1,2 @@
+ALTER TABLE transactions ADD COLUMN  attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();

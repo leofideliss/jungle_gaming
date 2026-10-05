@@ -41,9 +41,8 @@ const (
 )
 
 type WagerTransaction struct {
-	id           uuid.UUID
-	externalTrId string
-
+	id                  uuid.UUID
+	externalTrId        string
 	providerID          string
 	idempotencyKey      string
 	walletId            uuid.UUID
@@ -52,18 +51,16 @@ type WagerTransaction struct {
 	roundID             string
 	referenceExternalId string
 	referenceInternalId uuid.UUID
-
-	payloadHash string
-
-	kind        Kind
-	status      Status
-	failureCode string
-
-	amount        money.Money
-	resultBalance money.Money
-
-	createdAt time.Time
-	updatedAt time.Time
+	payloadHash         string
+	kind                Kind
+	status              Status
+	failureCode         string
+	amount              money.Money
+	resultBalance       money.Money
+	createdAt           time.Time
+	updatedAt           time.Time
+	attempts            int
+	nextAttemptAt       time.Time
 }
 
 type NewWagerTransactionInput struct {
@@ -99,6 +96,8 @@ type RestoreWagerTransactionInput struct {
 	ResultBalance       money.Money
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	Attempts            int
+	NextAttemptAt       time.Time
 }
 
 func NewWagerTransaction(wgInput NewWagerTransactionInput) (WagerTransaction, error) {
@@ -294,3 +293,5 @@ func (w WagerTransaction) Amount() money.Money            { return w.amount }
 func (w WagerTransaction) ResultBalance() money.Money     { return w.resultBalance }
 func (w WagerTransaction) CreatedAt() time.Time           { return w.createdAt }
 func (w WagerTransaction) UpdatedAt() time.Time           { return w.updatedAt }
+func (w WagerTransaction) Attempts() int                  { return w.attempts }
+func (w WagerTransaction) NextAttemptAt() time.Time       { return w.nextAttemptAt }
