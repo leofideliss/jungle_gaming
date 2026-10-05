@@ -3,9 +3,10 @@ package worker
 import (
 	"context"
 	"errors"
+	"jungle_gaming/internal/domain/ledger"
 	"jungle_gaming/internal/domain/wager"
+	"jungle_gaming/internal/domain/wallet"
 	"jungle_gaming/internal/repository"
-	"jungle_gaming/internal/usecase"
 	"log"
 	"time"
 
@@ -13,16 +14,16 @@ import (
 )
 
 type ProcessPendingTr struct {
-	pool                    *pgxpool.Pool
-	wagerTransactionRepo    *repository.WagerTransactionRepository
-	wagerTransactionUseCase usecase.WagerUseCase
+	pool                 *pgxpool.Pool
+	wagerTransactionRepo *repository.WagerTransactionRepository
+	wallet               *repository.WalletRepository
 }
 
-func NewProcessPendingTr(p *pgxpool.Pool, repo *repository.WagerTransactionRepository, u usecase.WagerUseCase) *ProcessPendingTr {
+func NewProcessPendingTr(p *pgxpool.Pool, repo *repository.WagerTransactionRepository, w *repository.WalletRepository) *ProcessPendingTr {
 	return &ProcessPendingTr{
-		pool:                    p,
-		wagerTransactionRepo:    repo,
-		wagerTransactionUseCase: u,
+		pool:                 p,
+		wagerTransactionRepo: repo,
+		wallet:               w,
 	}
 }
 
@@ -33,6 +34,7 @@ func (p *ProcessPendingTr) Start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			log.Println("Parando worker transacoes pendentes")
+			return
 		default:
 		}
 
@@ -49,47 +51,92 @@ func (p *ProcessPendingTr) process(ctx context.Context) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	maxAttempts := 10
+
 	trs, err := p.wagerTransactionRepo.FindByReprocess(ctx, tx)
 	if err != nil {
 		return
 	}
 
-	for _, tr := range trs {
-		_, err := p.wagerTransactionRepo.FindByExternalTransactionIdAndProviderId(ctx, tr.ReferenceExternalID(), tr.ProviderID())
-		if errors.Is(err, repository.ErrTransactionNotFound) {
-			attempts := tr.Attempts()
-			switch {
-			case attempts >= maxAttempts:
-				if err := p.wagerTransactionRepo.UpdateStatus(ctx, tx, wager.StatusFailed, tr.ID()); err != nil {
-					return
-				}
-			default:
-				attempts++
-				_, err := p.wagerTransactionUseCase.ProcessWagerTransaction(ctx, tr, usecase.ProcessWagerInput{
-					ExternalTransactionID: tr.ExternalTrID(),
-					ProviderID:            tr.ProviderID(),
-					IdempotencyKey:        tr.IdempotencyKey(),
-					PlayerID:              tr.PlayerID(),
-					WalletID:              tr.WalletID(),
-					RoundID:               tr.RoundID(),
-					GameID:                tr.GameID(),
-					Kind:                  tr.Kind(),
-					Amount:                tr.Amount()})
+	if len(trs) == 0 {
+		log.Println("Nenhuma transacao pendente para processar")
+		return
+	}
 
-				if err != nil {
-					tr.NextAttemptAt().Add(time.Second * time.Duration(attempts))
-					if err := p.wagerTransactionRepo.UpdateRetryTrPending(ctx, tx, tr.ID(), attempts, tr.NextAttemptAt()); err != nil {
-						return
-					}
-				}
+	const maxAttempts = 10
+	for _, tr := range trs {
+		ref, err := p.wagerTransactionRepo.FindByExternalTransactionIdAndProviderId(ctx, tr.ReferenceExternalID(), tr.ProviderID())
+		if errors.Is(err, repository.ErrTransactionNotFound) {
+
+			attempts := tr.Attempts() + 1
+			nextAttempt := tr.NextAttemptAt().Add(backoff(attempts))
+
+			if attempts >= maxAttempts {
+				tr.MarkAsRejected("REFERENCE_NOT_FOUND")
+				p.wagerTransactionRepo.UpdateStatus(ctx, tx, wager.StatusRejected, tr.ID())
+				continue
 			}
+			if err := p.wagerTransactionRepo.UpdateRetryTrPending(ctx, tx, tr.ID(), attempts, nextAttempt); err != nil {
+				continue
+			}
+			continue
 		}
 
+		if err != nil {
+			continue
+		}
+
+		userWallet, err := p.wallet.GetWallet(ctx, tx, tr.WalletID())
+		if err != nil {
+			continue
+		}
+		var entry ledger.WalletLedger
+		switch ref.Kind() {
+		case wager.KindBet:
+			entry, err = userWallet.Credit(ref.Amount(), tr.ID())
+			if err != nil {
+				continue
+			}
+
+		case wager.KindRefund, wager.KindWin:
+			entry, err = userWallet.Debit(ref.Amount(), tr.ID())
+			if errors.Is(err, wallet.ErrInsufficientBalance) {
+				if err := tr.MarkAsRejected("INSUFFICIENT_BALANCE"); err != nil {
+					continue
+				}
+				if err := p.wagerTransactionRepo.UpdateStatus(ctx, tx, wager.StatusRejected, tr.ID()); err != nil {
+					continue
+				}
+			}
+
+			if err != nil {
+				continue
+			}
+
+		default:
+			continue
+		}
+
+		if err := p.wallet.UpdateWallet(ctx, tx, tr.WalletID(), userWallet.Balance().Cents(), tr.ID(), entry); err != nil {
+			continue
+		}
+
+		if err := tr.MarkAsProcessed(userWallet.Balance()); err != nil {
+			continue
+		}
+
+		p.wagerTransactionRepo.UpdateStatus(ctx, tx, wager.StatusProcessed, tr.ID())
 	}
 
 	err = tx.Commit(ctx)
 	if err != nil {
 		return
 	}
+}
+
+func backoff(attempt int) time.Duration {
+	d := time.Duration(1<<uint(attempt)) * 5 * time.Second
+	if d > 5*time.Minute {
+		d = 5 * time.Minute
+	}
+	return d
 }

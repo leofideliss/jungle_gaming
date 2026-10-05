@@ -196,6 +196,8 @@ func RestoreWagerTransaction(in RestoreWagerTransactionInput) (WagerTransaction,
 		resultBalance:       in.ResultBalance,
 		createdAt:           in.CreatedAt,
 		updatedAt:           in.UpdatedAt,
+		attempts:            in.Attempts,
+		nextAttemptAt:       in.NextAttemptAt,
 	}, nil
 }
 

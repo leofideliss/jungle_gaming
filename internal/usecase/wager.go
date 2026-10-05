@@ -448,7 +448,7 @@ func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet walle
 			if err := newTransaction.MarkAsRejected("INSUFFICIENT_BALANCE"); err != nil {
 				return wager.WagerTransaction{}, err
 			}
-			_, err = w.outboxTrRejected(ctx, tx, in, trID, newTransaction, "DUPLICATED_TRANSACTION")
+			_, err = w.outboxTrRejected(ctx, tx, in, trID, newTransaction, "INSUFFICIENT_BALANCE")
 			if err != nil {
 				return wager.WagerTransaction{}, err
 			}

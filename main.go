@@ -72,6 +72,15 @@ func main() {
 			},
 		),
 		fx.Provide(
+			func(pool *pgxpool.Pool, repo *repository.WagerTransactionRepository, w *repository.WalletRepository) *worker.ProcessPendingTr {
+				return worker.NewProcessPendingTr(
+					pool,
+					repo,
+					w,
+				)
+			},
+		),
+		fx.Provide(
 			repository.NewWalletRepository,
 			repository.NewOutboxRepository,
 			repository.NewInboxRepository,
@@ -87,6 +96,7 @@ func main() {
 		fx.Invoke(startServer),
 		fx.Invoke(startConsumer),
 		fx.Invoke(startOutboxProducer),
+		fx.Invoke(startWorkerTrpending),
 	).Run()
 }
 
@@ -134,6 +144,21 @@ func startOutboxProducer(lc fx.Lifecycle, outboxProducer *worker.SQSOutboxProduc
 	lc.Append(fx.Hook{
 		OnStart: func(_ context.Context) error {
 			go outboxProducer.Start(ctx)
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			cancel()
+			return nil
+		},
+	})
+}
+
+func startWorkerTrpending(lc fx.Lifecycle, workerTrpending *worker.ProcessPendingTr) {
+	ctx, cancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+
+		OnStart: func(_ context.Context) error {
+			go workerTrpending.Start(ctx)
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
