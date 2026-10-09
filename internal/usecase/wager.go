@@ -41,6 +41,11 @@ type ProcessWagerInput struct {
 	Amount                money.Money
 }
 
+type CreateWalletInput struct {
+	PlayerID       uuid.UUID
+	InitialBalance money.Money
+}
+
 type WagerUseCase struct {
 	pool         *pgxpool.Pool
 	wallets      *repository.WalletRepository
@@ -486,4 +491,52 @@ func (w *WagerUseCase) rollback(ctx context.Context, tx pgx.Tx, userWallet walle
 
 	return w.saveTransaction(ctx, tx, newTransaction)
 
+}
+
+func (w *WagerUseCase) CreateWallet(ctx context.Context, in CreateWalletInput) (wallet.Wallet, error) {
+	tx, err := w.pool.Begin(ctx)
+	if err != nil {
+		return wallet.Wallet{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. cria a wallet no domínio
+	newWallet, err := wallet.NewWallet(in.PlayerID.String(), in.InitialBalance)
+	if err != nil {
+		return wallet.Wallet{}, err
+	}
+
+	// 2. persiste a wallet
+	if err := w.wallets.InsertWallet(ctx, tx, newWallet); err != nil {
+		return wallet.Wallet{}, err
+	}
+
+	// 3. credita saldo inicial → gera ledger
+	trID := uuid.Must(uuid.NewV7())
+	entry, err := newWallet.Credit(in.InitialBalance, trID)
+	if err != nil {
+		return wallet.Wallet{}, err
+	}
+
+	// 4. cria OPENING transaction
+	opening, err := wager.NewWagerTransactionKindOpen(newWallet.ID(), in.PlayerID, in.InitialBalance)
+	if err != nil {
+		return wallet.Wallet{}, err
+	}
+	opening.MarkAsProcessed(newWallet.Balance())
+
+	// 5. persiste tudo
+	if err := w.wallets.UpdateWallet(ctx, tx, newWallet.ID(), newWallet.Balance().Cents(), trID, entry); err != nil {
+		return wallet.Wallet{}, err
+	}
+	if err := w.transactions.Insert(ctx, tx, opening); err != nil {
+		return wallet.Wallet{}, err
+	}
+
+	// 6. commit
+	if err := tx.Commit(ctx); err != nil {
+		return wallet.Wallet{}, err
+	}
+
+	return newWallet, nil
 }

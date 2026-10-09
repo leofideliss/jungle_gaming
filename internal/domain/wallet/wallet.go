@@ -139,3 +139,8 @@ func (w Wallet) Balance() money.Money {
 func (w Wallet) Version() int64 {
 	return w.version
 }
+
+func (w Wallet) ID() uuid.UUID        { return w.id }
+func (w Wallet) PlayerID() uuid.UUID  { return w.playerId }
+func (w Wallet) CreatedAt() time.Time { return w.createdAt }
+func (w Wallet) UpdatedAt() time.Time { return w.updatedAt }

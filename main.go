@@ -92,6 +92,9 @@ func main() {
 			func(uc *usecase.WagerUseCase) *handler.WagerHandler {
 				return handler.NewWagerHandler(uc)
 			},
+			func(uc *usecase.WagerUseCase) *handler.WalletHandler {
+				return handler.NewWalletHandler(uc)
+			},
 		),
 		fx.Invoke(startServer),
 		fx.Invoke(startConsumer),
@@ -100,9 +103,10 @@ func main() {
 	).Run()
 }
 
-func startServer(lc fx.Lifecycle, h *handler.WagerHandler, health *handler.HealthHandler, authMW func(http.Handler) http.Handler) {
+func startServer(lc fx.Lifecycle, h *handler.WagerHandler, health *handler.HealthHandler, wl *handler.WalletHandler, authMW func(http.Handler) http.Handler) {
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
+	wl.RegisterRoutes(mux)
 	health.RegisterRoutes(mux)
 
 	wrapped := authMW(mux)

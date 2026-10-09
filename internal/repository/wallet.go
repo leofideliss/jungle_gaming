@@ -37,6 +37,21 @@ func NewWalletRepository(pool *pgxpool.Pool) *WalletRepository {
 	return &WalletRepository{pool: pool}
 }
 
+func (r *WalletRepository) InsertWallet(ctx context.Context, tx pgx.Tx, w wallet.Wallet) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO wallets (id, player_id, balance, currency, version, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		w.ID(),
+		w.PlayerID(),
+		w.Balance().Cents(),
+		w.Balance().Currency(),
+		w.Version(),
+		w.CreatedAt(),
+		w.UpdatedAt(),
+	)
+	return err
+}
+
 func (r *WalletRepository) GetWallet(ctx context.Context, tx pgx.Tx, id uuid.UUID) (wallet.Wallet, error) {
 	var row walletRow
 

@@ -39,6 +39,11 @@ func (wh *WagerHandler) ProcessWagerTransaction(w http.ResponseWriter, r *http.R
 	in.Data.IdempotencyKey = r.Header.Get("x-idempotency-key")
 	in.Data.ProviderID = getProviderID(r.Context())
 
+	if err := in.Validate(); err != nil {
+		WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	wagerInput, err := in.ToInput()
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, err.Error())

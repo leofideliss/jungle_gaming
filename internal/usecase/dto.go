@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"errors"
 	"jungle_gaming/internal/domain/money"
 	"jungle_gaming/internal/domain/wager"
 
@@ -23,6 +24,25 @@ type WagerRequestDTO struct {
 			Currency string `json:"currency"`
 		} `json:"money"`
 	} `json:"data"`
+}
+
+func (r WagerRequestDTO) Validate() error {
+	if r.Data.PlayerID == "" {
+		return errors.New("playerId é obrigatório")
+	}
+	if r.Data.WalletID == "" {
+		return errors.New("walletId é obrigatório")
+	}
+	if r.Data.Kind == "" {
+		return errors.New("kind é obrigatório")
+	}
+	if r.Data.Money.Amount == "" {
+		return errors.New("amount é obrigatório")
+	}
+	if r.Data.Money.Currency == "" {
+		return errors.New("currency é obrigatório")
+	}
+	return nil
 }
 
 func (r WagerRequestDTO) ToInput() (ProcessWagerInput, error) {
